@@ -43,7 +43,14 @@ export const getSuscribers = async (
   res: Response
 ): Promise<Response | void> => {
   try {
-    const suscribers: ISubscriber[] = await suscriberSchema.find();
+    // solo isSuscribed suscribers
+    const suscribers: ISubscriber[] = await suscriberSchema.find({
+      isSuscribed: true,
+    });
+    if (suscribers.length === 0) {
+      return res.status(404).json({ message: "No subscribers found" });
+    }
+
     return res.status(200).json(suscribers);
   } catch (error) {
     return res.status(500).json({ message: "Error fetching subscribers" });
