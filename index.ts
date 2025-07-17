@@ -13,9 +13,8 @@ app.use(express.json());
 
 app.use(
   cors({
-    origin: "*",
+    origin: "http://localhost:4321",
     methods: ["GET", "POST"],
-    allowedHeaders: ["Content-Type", "Authorization", "x-api-key"],
   })
 );
 
