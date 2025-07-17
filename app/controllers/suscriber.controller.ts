@@ -1,4 +1,5 @@
 import suscriberSchema from "../config/suscriber.schema";
+import { checkEmailService } from "../services/email-checker.service";
 import { ISubscriber } from "../types/suscriber";
 import { Request, Response } from "express";
 import { Resend } from "resend";
@@ -12,6 +13,11 @@ export const createSuscriber = async (
   res: Response
 ): Promise<Response | void> => {
   const { email } = req.body;
+  const apiKey = process.env.CHECKERMAIL_API_KEY;
+  if (!apiKey) {
+    return res.status(500).json({ message: "API Key not configured" });
+  }
+
   if (!email) {
     return res.status(400).json({ message: "El email es requerido" });
   }
@@ -26,6 +32,10 @@ export const createSuscriber = async (
     suscriberExists.isSuscribed = true;
     await suscriberExists.save();
     return res.status(200).json({ message: "Suscripción reactivada" });
+  }
+  const data = await checkEmailService(email, apiKey);
+  if (data.status !== "valid") {
+    return res.status(400).json({ message: "El email no es válido" });
   }
 
   try {
@@ -71,6 +81,7 @@ export const addContactResend = async (
   if (!audienceId) {
     return res.status(500).json({ message: "Audience ID not configured" });
   }
+  // 1. Obtener todos los suscriptores activos de la base de datos
   const subscribers: IResendResponse[] = await suscriberSchema.find({
     isSuscribed: true,
   });
@@ -79,15 +90,39 @@ export const addContactResend = async (
   }
 
   try {
-    for (const subscriber of subscribers) {
+    // 2. Obtener todos los contactos existentes en Resend para ese audienceId
+    //    (esto puede paginar, aquí solo se obtiene la primera página, ajusta si tienes muchos contactos)
+    const existingContacts = await resend.contacts.list({ audienceId });
+    let newSubscribers: IResendResponse[] = subscribers;
+    let existingEmails: string[] = [];
+    // Si hay contactos en Resend, filtrar solo los nuevos
+    if (
+      existingContacts.data &&
+      Array.isArray(existingContacts.data.data) &&
+      existingContacts.data.data.length > 0
+    ) {
+      existingEmails = existingContacts.data.data.map((c: any) => c.email);
+      newSubscribers = subscribers.filter(
+        (s) => !existingEmails.includes(s.email)
+      );
+    }
+
+    // Crear todos si no hay contactos en Resend, o solo los nuevos si existen
+    for (const subscriber of newSubscribers) {
       await resend.contacts.create({
         audienceId,
         email: subscriber.email,
         unsubscribed: false,
       });
     }
-    return res.status(200).json({ message: "Contacts added successfully" });
+
+    return res.status(200).json({
+      message: `Contacts added successfully: ${newSubscribers.length}`,
+      added: newSubscribers.map((s) => s.email),
+      skipped: subscribers.length - newSubscribers.length,
+    });
   } catch (error) {
+    // Si ocurre un error, devolver el mensaje y el error
     return res.status(500).json({ message: "Error adding contacts", error });
   }
 };
@@ -105,7 +140,7 @@ export const sendNewsletter = async (
   try {
     const broadcast = await resend.broadcasts.create({
       audienceId: audienceId,
-      from: "Comunidad-Clan <comunidadclan@comunidadclan.cl>",
+      from: "Comunidad Clan <comunidadclan@comunidadclan.cl>",
       subject: "hello world",
       html: "Hi {{{FIRST_NAME|there}}}, you can unsubscribe here: {{{RESEND_UNSUBSCRIBE_URL}}}",
     });
@@ -132,6 +167,8 @@ export const sendNewsletter = async (
   }
 };
 
+// Obtiene los contactos de Resend y actualiza los suscriptores en la base de datos
+// con el estado de suscripción basado en los datos de Resend
 export const getContactsResend = async (
   req: Request,
   res: Response
@@ -149,42 +186,32 @@ export const getContactsResend = async (
       return res.status(500).json({ message: "Audience ID not configured" });
     }
 
-    // 1. obtencion de contactos desde Resend
-    // Usamos Promise.allSettled para manejar errores individuales sin detener todo el proceso
-    //
-    // Esto es útil si algunos contactos no existen en Resend, pero queremos seguir procesando
-    const contactResponses = await Promise.allSettled(
-      suscribers.map((s) =>
-        resend.contacts.get({
-          email: s.email,
-          audienceId,
-        })
-      )
-    );
+    const contactResponses = await resend.contacts.list({
+      audienceId,
+    });
 
-    // 2. Filtrar los contactos válidos
-
-    // cuando es fulfilled, el valor es un objeto con una propiedad data
-    // y cuando es rejected, no tiene esa propiedad
-    const validContacts = contactResponses
-      .filter((r) => r.status === "fulfilled" && r.value?.data)
-      .map((r) => (r as PromiseFulfilledResult<any>).value.data);
-
-    if (validContacts.length === 0) {
+    if (
+      !contactResponses ||
+      !contactResponses.data ||
+      !Array.isArray(contactResponses.data.data) ||
+      contactResponses.data.data.length === 0
+    ) {
       return res.status(404).json({ message: "No contacts found" });
     }
 
-    // 3. Preparar operaciones en lote para Mongo
-    // filtramos desde los contactos obtenidos de Resend
-    // Solo actualizamos los que están unsubscribed(true)
-    const bulkUpdates = validContacts
-      .filter((c) => c.unsubscribed)
-      .map((c) => ({
-        updateOne: {
-          filter: { email: c.email },
-          update: { $set: { isSuscribed: false } },
-        },
-      }));
+    // Get all emails in DB in lowercase for comparison
+    const emailsInDb = suscribers.map((s: any) => s.email.trim().toLowerCase());
+
+    const validContacts = contactResponses.data.data.filter((c: any) =>
+      emailsInDb.includes(c.email.trim().toLowerCase())
+    );
+
+    const bulkUpdates = validContacts.map((c) => ({
+      updateOne: {
+        filter: { email: c.email },
+        update: { $set: { isSuscribed: c.unsubscribed === false } },
+      },
+    }));
 
     // 4. Ejecutar actualizaciones si hay
     if (bulkUpdates.length > 0) {
@@ -194,7 +221,7 @@ export const getContactsResend = async (
     return res.status(200).json({
       message: "Contacts processed successfully",
       contacts: validContacts,
-      unsubscribedCount: bulkUpdates.length,
+      updatedCount: bulkUpdates.length,
     });
   } catch (error) {
     console.error("Error in getContactsResend:", error);
