@@ -198,7 +198,11 @@ export const getContactsResend = async (
     ) {
       return res.status(404).json({ message: "No contacts found" });
     }
-
+    if (contactResponses.data.data.length < suscribers.length) {
+      console.warn(
+        "La cantidad de contactos recibida de Resend es menor que la de la base de datos. Verificar si hay un límite en la API."
+      );
+    }
     // Get all emails in DB in lowercase for comparison
     const emailsInDb = suscribers.map((s: any) => s.email.trim().toLowerCase());
 
@@ -213,6 +217,21 @@ export const getContactsResend = async (
       },
     }));
 
+    // funcion para sincronizar base de datos con Resend
+    // si base de datos tiene isSuscribed = true, pero Resend tiene unsubscribed = true, actualizar unSuscribed a false
+    const unsubscribeUpdates = suscribers.filter(
+      (s) =>
+        s.isSuscribed &&
+        validContacts.some((c) => c.email === s.email && c.unsubscribed)
+    );
+
+    for (const subscriber of unsubscribeUpdates) {
+      await resend.contacts.update({
+        email: subscriber.email,
+        audienceId,
+        unsubscribed: false, // Actualizar a unsubscribed
+      });
+    }
     // 4. Ejecutar actualizaciones si hay
     if (bulkUpdates.length > 0) {
       await suscriberSchema.bulkWrite(bulkUpdates);
@@ -222,6 +241,7 @@ export const getContactsResend = async (
       message: "Contacts processed successfully",
       contacts: validContacts,
       updatedCount: bulkUpdates.length,
+      unsubscribedCount: unsubscribeUpdates.length,
     });
   } catch (error) {
     console.error("Error in getContactsResend:", error);
