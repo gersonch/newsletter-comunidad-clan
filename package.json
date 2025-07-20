@@ -17,6 +17,7 @@
     "express-rate-limit": "^8.0.0",
     "mongodb": "^6.17.0",
     "mongoose": "^8.16.3",
+    "node-cron": "^4.2.1",
     "resend": "^4.6.0"
   },
   "devDependencies": {
