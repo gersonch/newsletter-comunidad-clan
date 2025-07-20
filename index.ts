@@ -18,7 +18,7 @@ app.use(express.json());
 
 app.use(
   cors({
-    origin: "http://localhost:4321",
+    origin: ["http://localhost:4321", "https://comunidadclan.cl"],
     methods: ["GET", "POST"],
   })
 );
