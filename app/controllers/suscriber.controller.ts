@@ -14,6 +14,11 @@ export const createSuscriber = async (
 ): Promise<Response | void> => {
   const { email } = req.body;
   const apiKey = process.env.CHECKERMAIL_API_KEY;
+  const resend = new Resend(process.env.RESEND_API_KEY);
+  const audienceId = process.env.RESEND_AUDIENCE_ID;
+  if (!resend || !audienceId) {
+    return res.status(500).json({ message: "Resend service not configured" });
+  }
   if (!apiKey) {
     return res.status(500).json({ message: "API Key not configured" });
   }
@@ -22,7 +27,11 @@ export const createSuscriber = async (
     return res.status(400).json({ message: "El email es requerido" });
   }
   const suscriberExists = await suscriberSchema.findOne({ email });
-  if (suscriberExists && suscriberExists.isSuscribed) {
+  const resendContactExists = await resend.contacts.get({
+    email: email,
+    audienceId: audienceId,
+  });
+  if (suscriberExists && suscriberExists.isSuscribed && resendContactExists) {
     return res
       .status(400)
       .json({ message: "Ya estas suscrito con este correo" });
@@ -42,6 +51,10 @@ export const createSuscriber = async (
     const newSuscriber = new suscriberSchema({
       email,
       isSuscribed: true,
+    });
+    const newSuscriberResend = await resend.contacts.create({
+      audienceId: audienceId,
+      email: email,
     });
     await newSuscriber.save();
     return res.status(201).json({
@@ -115,51 +128,51 @@ export const sendNewsletter = async (
 // ...importaciones y definiciones previas...
 
 // Lógica interna para node-cron y controllers
-export const addContactResendLogic = async () => {
-  const resend = new Resend(process.env.RESEND_API_KEY);
-  const audienceId = process.env.RESEND_AUDIENCE_ID;
-  const subscribers: IResendResponse[] = await suscriberSchema.find({
-    isSuscribed: true,
-  });
-  if (!audienceId) {
-    return { status: 500, data: { message: "Audience ID not configured" } };
-  }
-  if (subscribers.length === 0) {
-    return { status: 404, data: { message: "No subscribers found" } };
-  }
-  try {
-    const existingContacts = await resend.contacts.list({ audienceId });
-    let newSubscribers: IResendResponse[] = subscribers;
-    let existingEmails: string[] = [];
-    if (
-      existingContacts.data &&
-      Array.isArray(existingContacts.data.data) &&
-      existingContacts.data.data.length > 0
-    ) {
-      existingEmails = existingContacts.data.data.map((c: any) => c.email);
-      newSubscribers = subscribers.filter(
-        (s) => !existingEmails.includes(s.email)
-      );
-    }
-    for (const subscriber of newSubscribers) {
-      await resend.contacts.create({
-        audienceId,
-        email: subscriber.email,
-        unsubscribed: false,
-      });
-    }
-    return {
-      status: 200,
-      data: {
-        message: `Contacts added successfully: ${newSubscribers.length}`,
-        added: newSubscribers.map((s) => s.email),
-        skipped: subscribers.length - newSubscribers.length,
-      },
-    };
-  } catch (error) {
-    return { status: 500, data: { message: "Error adding contacts", error } };
-  }
-};
+// export const addContactResendLogic = async () => {
+//   const resend = new Resend(process.env.RESEND_API_KEY);
+//   const audienceId = process.env.RESEND_AUDIENCE_ID;
+//   const subscribers: IResendResponse[] = await suscriberSchema.find({
+//     isSuscribed: true,
+//   });
+//   if (!audienceId) {
+//     return { status: 500, data: { message: "Audience ID not configured" } };
+//   }
+//   if (subscribers.length === 0) {
+//     return { status: 404, data: { message: "No subscribers found" } };
+//   }
+//   try {
+//     const existingContacts = await resend.contacts.list({ audienceId });
+//     let newSubscribers: IResendResponse[] = subscribers;
+//     let existingEmails: string[] = [];
+//     if (
+//       existingContacts.data &&
+//       Array.isArray(existingContacts.data.data) &&
+//       existingContacts.data.data.length > 0
+//     ) {
+//       existingEmails = existingContacts.data.data.map((c: any) => c.email);
+//       newSubscribers = subscribers.filter(
+//         (s) => !existingEmails.includes(s.email)
+//       );
+//     }
+//     for (const subscriber of newSubscribers) {
+//       await resend.contacts.create({
+//         audienceId,
+//         email: subscriber.email,
+//         unsubscribed: false,
+//       });
+//     }
+//     return {
+//       status: 200,
+//       data: {
+//         message: `Contacts added successfully: ${newSubscribers.length}`,
+//         added: newSubscribers.map((s) => s.email),
+//         skipped: subscribers.length - newSubscribers.length,
+//       },
+//     };
+//   } catch (error) {
+//     return { status: 500, data: { message: "Error adding contacts", error } };
+//   }
+// };
 
 export const getContactsResendLogic = async () => {
   const suscribers = await suscriberSchema.find();
@@ -244,10 +257,10 @@ export const syncUnsubscribedContactsLogic = async () => {
 };
 
 // Controllers Express
-export const addContactResend = async (req: Request, res: Response) => {
-  const result = await addContactResendLogic();
-  return res.status(result.status).json(result.data);
-};
+// export const addContactResend = async (req: Request, res: Response) => {
+//   const result = await addContactResendLogic();
+//   return res.status(result.status).json(result.data);
+// };
 
 export const getContactsResend = async (req: Request, res: Response) => {
   const result = await getContactsResendLogic();

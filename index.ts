@@ -7,7 +7,6 @@ import cors from "cors";
 import { suscriberRateLimiter } from "./app/middlewares/rate-limit.middleware";
 import cron from "node-cron";
 import {
-  addContactResendLogic,
   getContactsResendLogic,
   syncUnsubscribedContactsLogic,
 } from "./app/controllers/suscriber.controller";
@@ -38,8 +37,8 @@ cron.schedule(
   "0 0 * * 4", // jueves a las 00:00 horas
   async () => {
     console.log("Cron ejecutado:", new Date().toLocaleString());
-    const addResult = await addContactResendLogic();
-    console.log("addContactResendLogic:", addResult);
+    // const addResult = await addContactResendLogic();
+    // console.log("addContactResendLogic:", addResult);
 
     const getResult = await getContactsResendLogic();
     console.log("getContactsResendLogic:", getResult);

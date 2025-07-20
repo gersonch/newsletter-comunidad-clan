@@ -1,5 +1,4 @@
 import {
-  addContactResend,
   createSuscriber,
   getContactsResend,
   getSuscribers,
@@ -12,7 +11,7 @@ const router = Router();
 router.post("/create", createSuscriber);
 router.get("/", getSuscribers);
 router.post("/send-newsletter", sendNewsletter);
-router.post("/add-contact-resend", addContactResend);
+// router.post("/add-contact-resend", addContactResend);
 //esta ruta tiene que ser llamada primero que sync-resend
 router.get("/get-contacts-resend", getContactsResend);
 // sincroniza los contactos de Resend con los suscriptores en la base de datos
