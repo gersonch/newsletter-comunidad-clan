@@ -48,21 +48,42 @@ export const createSuscriber = async (
   }
 
   try {
-    const newSuscriber = new suscriberSchema({
-      email,
-      isSuscribed: true,
-    });
+    // Primero intenta crear el contacto en Resend
     const newSuscriberResend = await resend.contacts.create({
       audienceId: audienceId,
       email: email,
     });
-    await newSuscriber.save();
-    return res.status(201).json({
-      message: "Suscripción exitosa",
-      suscriber: newSuscriber,
-    });
+    if (!newSuscriberResend || newSuscriberResend.error) {
+      return res.status(500).json({
+        message: "Error creando contacto en Resend",
+        error: newSuscriberResend?.error,
+      });
+    }
+    // Si Resend fue exitoso, guarda en la base de datos
+    try {
+      const newSuscriber = new suscriberSchema({
+        email,
+        isSuscribed: true,
+      });
+      await newSuscriber.save();
+      return res.status(201).json({
+        message: "Suscripción exitosa",
+        suscriber: newSuscriber,
+      });
+    } catch (dbError) {
+      await resend.contacts.remove({
+        email: email,
+        audienceId: audienceId,
+      });
+      return res.status(500).json({
+        message: "Error creando suscriptor en la base de datos",
+        error: dbError,
+      });
+    }
   } catch (error) {
-    return res.status(500).json({ message: "Error creating subscriber" });
+    return res
+      .status(500)
+      .json({ message: "Error creando suscriptor en BD o Resend", error });
   }
 };
 
