@@ -22,15 +22,22 @@ export const createSuscriber = async (
   if (!apiKey) {
     return res.status(500).json({ message: "API Key not configured" });
   }
-
   if (!email) {
     return res.status(400).json({ message: "El email es requerido" });
   }
-  const suscriberExists = await suscriberSchema.findOne({ email });
-  const resendContactExists = await resend.contacts.get({
-    email: email,
-    audienceId: audienceId,
-  });
+
+  // 1. Validar email primero (evita llamadas innecesarias)
+  const data = await checkEmailService(email, apiKey);
+  if (data.status !== "valid") {
+    return res.status(400).json({ message: "El email no es válido" });
+  }
+
+  // 2. Consultar en paralelo si existe en la base y en Resend
+  const [suscriberExists, resendContactExists] = await Promise.all([
+    suscriberSchema.findOne({ email }),
+    resend.contacts.get({ email, audienceId }),
+  ]);
+
   if (suscriberExists && suscriberExists.isSuscribed && resendContactExists) {
     return res
       .status(400)
@@ -42,16 +49,12 @@ export const createSuscriber = async (
     await suscriberExists.save();
     return res.status(200).json({ message: "Suscripción reactivada" });
   }
-  const data = await checkEmailService(email, apiKey);
-  if (data.status !== "valid") {
-    return res.status(400).json({ message: "El email no es válido" });
-  }
 
+  // 3. Crear contacto en Resend y luego en la base de datos
   try {
-    // Primero intenta crear el contacto en Resend
     const newSuscriberResend = await resend.contacts.create({
-      audienceId: audienceId,
-      email: email,
+      audienceId,
+      email,
     });
     if (!newSuscriberResend || newSuscriberResend.error) {
       return res.status(500).json({
@@ -59,7 +62,6 @@ export const createSuscriber = async (
         error: newSuscriberResend?.error,
       });
     }
-    // Si Resend fue exitoso, guarda en la base de datos
     try {
       const newSuscriber = new suscriberSchema({
         email,
@@ -71,12 +73,14 @@ export const createSuscriber = async (
         suscriber: newSuscriber,
       });
     } catch (dbError) {
+      // Rollback: eliminar contacto en Resend si falla la base de datos
       await resend.contacts.remove({
-        email: email,
-        audienceId: audienceId,
+        email,
+        audienceId,
       });
       return res.status(500).json({
-        message: "Error creando suscriptor en la base de datos",
+        message:
+          "Error creando suscriptor en la base de datos, rollback en Resend",
         error: dbError,
       });
     }

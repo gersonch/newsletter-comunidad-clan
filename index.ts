@@ -10,11 +10,21 @@ import {
   getContactsResendLogic,
   syncUnsubscribedContactsLogic,
 } from "./app/controllers/suscriber.controller";
+import rateLimit from "express-rate-limit";
 
 // configures dotenv to work in your application
 dotenv.config();
 const app = express();
 app.use(express.json());
+app.set("trust proxy", true);
+
+// Limitar a 100 requests por 15 minutos
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 100,
+});
+
+app.use(limiter);
 
 app.use(
   cors({
